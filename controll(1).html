@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>STM32 Web Joystick</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.10.1/nipplejs.min.js"></script>
+    <style>
+        body { font-family: sans-serif; margin: 0; overflow: hidden; background: #121212; color: white; touch-action: none; }
+        #header { height: 10vh; display: flex; align-items: center; justify-content: space-evenly; background: #1f1f1f; }
+        .container { display: flex; height: 90vh; width: 100vw; position: relative; }
+        .zone { width: 50%; height: 100%; position: relative; border: 1px solid #333; }
+        #connect-btn { padding: 10px 20px; background: #2ecc71; border: none; color: white; border-radius: 5px; }
+        .label { position: absolute; top: 10px; width: 100%; text-align: center; color: #555; pointer-events: none; }
+        #debug { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); font-family: monospace; color: #0f0; font-size: 12px; }
+    </style>
+</head>
+<body>
+
+<div id="header">
+    <div id="status">状态: 🔴 未连接</div>
+    <button id="connect-btn">连接遥控板</button>
+</div>
+
+<div class="container">
+    <div id="zone_left" class="zone"><div class="label">油门 / 偏航 (Throttle / Yaw)</div></div>
+    <div id="zone_right" class="zone"><div class="label">俯仰 / 横滚 (Pitch / Roll)</div></div>
+</div>
+
+<div id="debug">Data: [0, 0, 0, 0]</div>
+
+<script>
+    let port, writer;
+    let driveData = { throttle: 0, yaw: 0, pitch: 0, roll: 0 };
+
+    // 初始化串口
+    document.getElementById('connect-btn').onclick = async () => {
+        try {
+            port = await navigator.serial.requestPort();
+            await port.open({ baudRate: 115200 });
+            writer = port.writable.getWriter();
+            document.getElementById('status').innerText = "状态: 🟢 已连接";
+            document.getElementById('connect-btn').style.display = 'none';
+            startHeartbeat(); // 开始发送数据循环
+        } catch (e) {
+            console.error(e);
+            alert("无法打开串口，请确保使用 Chrome 并通过 HTTPS 访问");
+        }
+    };
+
+    // 配置左侧摇杆 (油门 & 转向)
+    const leftJoy = nipplejs.create({
+        zone: document.getElementById('zone_left'),
+        mode: 'static',
+        position: { left: '50%', top: '50%' },
+        color: 'blue',
+        size: 150
+    });
+
+    leftJoy.on('move', (evt, data) => {
+        // 将弧度/距离转化为 -100 到 100 的值
+        driveData.yaw = Math.round(data.instance.frontPosition.x);
+        driveData.throttle = Math.round(-data.instance.frontPosition.y); // Y轴向上为正
+    });
+
+    leftJoy.on('end', () => {
+        driveData.yaw = 0;
+        // 注意：油门通常不需要自动回弹到0，但为了安全可以设为回弹，或者保持当前值
+        // driveData.throttle = 0; 
+    });
+
+    // 配置右侧摇杆 (俯仰 & 横滚)
+    const rightJoy = nipplejs.create({
+        zone: document.getElementById('zone_right'),
+        mode: 'static',
+        position: { left: '50%', top: '50%' },
+        color: 'red',
+        size: 150
+    });
+
+    rightJoy.on('move', (evt, data) => {
+        driveData.roll = Math.round(data.instance.frontPosition.x);
+        driveData.pitch = Math.round(-data.instance.frontPosition.y);
+    });
+
+    rightJoy.on('end', () => {
+        driveData.roll = 0;
+        driveData.pitch = 0;
+    });
+
+    // 循环发送数据包给 STM32 (每 50ms 发送一次)
+    async function startHeartbeat() {
+        while (writer) {
+            // 构造协议包: 帧头(0xAA) + Throttle + Yaw + Pitch + Roll + 校验和/帧尾
+            // 为了简单，我们直接发送带分隔符的字符串，或者 Hex
+            const dataString = `A${driveData.throttle},${driveData.yaw},${driveData.pitch},${driveData.roll}Z`;
+            const encoder = new TextEncoder();
+            await writer.write(encoder.encode(dataString));
+            
+            document.getElementById('debug').innerText = `Sent: ${dataString}`;
+            await new Promise(r => setTimeout(r, 50)); // 20Hz 刷新率
+        }
+    }
+</script>
+</body>
+</html>
