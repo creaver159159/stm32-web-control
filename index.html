@@ -36,6 +36,7 @@
     document.getElementById('connect-btn').onclick = async () => {
         try {
             port = await navigator.serial.requestPort();
+            filters = [{ usbVendorId: 0x1A86}]; // 替换为你的设备 VID/PID
             await port.open({ baudRate: 115200 });
             writer = port.writable.getWriter();
             document.getElementById('status').innerText = "状态: 🟢 已连接";
